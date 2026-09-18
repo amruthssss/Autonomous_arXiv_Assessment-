@@ -2,10 +2,10 @@
 
 <p align="center">
 
-### **From Paper Discovery → Local RAG → Grounded Research Answers**
+### ⭐ Autonomous Paper Discovery • Local RAG • Grounded Research QA
 
-<p align="center">
-  <img src="https://readme-typing-svg.demolab.com?font=Fira+Code&size=20&pause=1000&color=4285F4&center=true&vCenter=true&width=750&lines=Autonomous+ArXiv+Research+Assistant;Local+RAG+%7C+Deterministic+Retrieval+%7C+Grounded+QA;Evidence-first+AI+Research+Workflow" alt="Typing SVG" />
+<img src="https://readme-typing-svg.demolab.com?font=Fira+Code&size=18&pause=1000&center=true&vCenter=true&width=750&lines=Search+ArXiv+%E2%86%92+Index+Papers+%E2%86%92+Ask+Grounded+Questions;Evidence-first+RAG+with+LangGraph+%2B+Gemini;Retrieve+Evidence+First.+Generate+Second." alt="Typing SVG" />
+
 </p>
 
 <p align="center">
@@ -17,168 +17,236 @@
   <img alt="Tests" src="https://img.shields.io/badge/tests-15%20passed-success">
 </p>
 
-<p align="center">
-  <strong>Search official arXiv papers. Build a local knowledge base. Ask questions.</strong><br>
-  <strong>Answers are generated only when sufficient evidence is retrieved.</strong>
-</p>
+---
+
+## ⭐ Overview
+
+**ArXiv Research Copilot** is an evidence-first AI research assistant that discovers papers through the official **arXiv API**, builds a **local RAG index**, and answers questions using retrieved evidence from the selected paper.
+
+Instead of sending an entire paper directly to an LLM, the system follows a controlled pipeline:
+
+```text
+User Query
+    ↓
+Paper Discovery
+    ↓
+Deterministic Ranking
+    ↓
+PDF Processing
+    ↓
+Local Embeddings
+    ↓
+ChromaDB
+    ↓
+Retrieval + Reranking
+    ↓
+Grounding Gate
+    ↓
+Gemini
+    ↓
+Answer + Sources
+```
+
+> **Core principle: Retrieve evidence first. Generate second.**
 
 ---
 
-## ✨ What is ArXiv Research Copilot?
+## ⭐ Key Features
 
-**ArXiv Research Copilot** is an evidence-first AI research assistant that combines:
+* 🔎 **ArXiv Paper Discovery** — Search and rank research papers using deterministic scoring.
+* 📄 **Direct Paper Lookup** — Accept an arXiv ID or URL.
+* 📖 **Page-Aware PDF Parsing** — Extract paper text locally with PyMuPDF.
+* ✂️ **Overlapping Chunking** — Preserve page and section context.
+* 🧠 **Local Embeddings** — `sentence-transformers/all-MiniLM-L6-v2`.
+* 🗄️ **Paper-Isolated ChromaDB** — Separate vector collection for each paper.
+* 🔍 **Two-Stage Retrieval** — Dense retrieval followed by deterministic reranking.
+* 🛡️ **Grounding Gate** — Prevent Gemini from answering when evidence is insufficient.
+* 📚 **Source Provenance** — Preserve paper, page, and section metadata.
+* 💾 **Caching** — Reuse metadata, PDFs, indexes, and briefings.
+* 🧠 **Active Paper Session** — Continue QA without repeatedly specifying the paper.
+* 🐞 **Debug Mode** — Inspect retrieval and grounding behavior.
+* 🧪 **Automated Tests** — Covers core workflow and failure cases.
 
-* 🔎 **Official arXiv paper discovery**
-* 📄 **Local PDF processing**
-* 🧩 **Page-aware document chunking**
-* 🧠 **Local semantic embeddings**
-* 🔍 **Two-stage RAG retrieval**
-* 📊 **Deterministic reranking**
-* 🛡️ **Grounding-based hallucination prevention**
-* 🤖 **Gemini-powered grounded generation**
-* 📚 **Paper/page-level source provenance**
-* 🧠 **Stateful LangGraph workflow**
+---
 
-Instead of simply sending an entire paper to an LLM, the system builds a controlled retrieval pipeline where the model receives **only the evidence selected by the retrieval and grounding layers**.
+## ⭐ Architecture
 
-```text
-User
- │
- ▼
-Query Understanding
- │
- ├────────────── Topic ──────────────┐
- │                                   ▼
- │                           Official arXiv API
- │                                   │
- │                                   ▼
- │                         Candidate Ranking
- │                                   │
- │                                   ▼
- │                            Selected Paper
- │                                   │
- └──────── Direct Paper ─────────────┘
-                                     │
-                                     ▼
-                                PDF → Parser
-                                     │
-                                     ▼
-                                  Chunks
-                                     │
-                                     ▼
-                              Local Embeddings
-                                     │
-                                     ▼
-                                  ChromaDB
-                                     │
-                                     ▼
-                              Dense Retrieval
-                                     │
-                                     ▼
-                               Reranking
-                                     │
-                                     ▼
-                              Grounding Gate
-                              /           \
-                         insufficient    sufficient
-                            │               │
-                            ▼               ▼
-                         Refuse          Gemini
-                                            │
-                                            ▼
-                                  Grounded Answer
-                                      + Sources
+```mermaid
+flowchart TD
+
+    A[User Input] --> B[Query Understanding]
+
+    B -->|Topic| C[Official arXiv API]
+    C --> D[Candidate Metadata]
+    D --> E[Deterministic Scoring]
+    E --> F[Sorted Ranking]
+    F --> G[Selected Paper]
+
+    B -->|Direct ID / URL| G
+
+    G --> H[Cached PDF]
+    H --> I[PyMuPDF Parser]
+    I --> J[Page / Section Chunking]
+    J --> K[Local Embeddings]
+    K --> L[(Paper-specific ChromaDB)]
+
+    L --> M[Dense Retrieval]
+    M --> N[Deterministic Reranking]
+    N --> O{Grounding Gate}
+
+    O -->|Insufficient Evidence| P[Refusal]
+    O -->|Sufficient Evidence| Q[Gemini]
+
+    Q --> R[Grounded Answer]
+    R --> S[Paper / Page Sources]
 ```
 
 ---
 
-# 🎯 Why This Project?
+## ⭐ LangGraph Workflow
 
-Many paper assistants follow a simple pattern:
-
-```text
-PDF → LLM → Answer
-```
-
-This project intentionally uses a more controlled architecture:
+The application uses an explicit, stateful LangGraph workflow:
 
 ```text
-Paper
+START
   ↓
-Parse
+classify
   ↓
-Chunk
+search
   ↓
-Embed
+index
   ↓
-Retrieve
+retrieve
   ↓
-Rerank
+generate
   ↓
-Grounding Check
-  ↓
-LLM
-  ↓
-Answer + Evidence
+END
 ```
 
-### Core engineering principles
-
-| Principle                       | Implementation                             |
-| ------------------------------- | ------------------------------------------ |
-| **Reliable paper discovery**    | Official arXiv API                         |
-| **Reproducible ranking**        | Deterministic scoring                      |
-| **Local processing**            | PyMuPDF + sentence-transformers            |
-| **Paper isolation**             | Dedicated ChromaDB collection              |
-| **Better retrieval**            | Dense retrieval + lexical/vector reranking |
-| **Hallucination control**       | Grounding gate                             |
-| **Traceability**                | Page/section/chunk provenance              |
-| **State management**            | LangGraph                                  |
-| **Low infrastructure overhead** | Local SQLite/JSON + ChromaDB               |
-| **Focused scope**               | CLI-first AI engineering system            |
+| Node       | Responsibility                                       |
+| ---------- | ---------------------------------------------------- |
+| `classify` | Identify topic search, direct paper, briefing, or QA |
+| `search`   | Resolve papers and rank candidates                   |
+| `index`    | Download/reuse PDF, parse, chunk, embed, and index   |
+| `retrieve` | Retrieve and rerank relevant evidence                |
+| `generate` | Generate briefing, grounded answer, or refusal       |
 
 ---
 
-# 🚀 Key Features
+## ⭐ Workflow State
 
-### 🔎 Intelligent Paper Discovery
+`ResearchState` carries information between LangGraph nodes.
 
-Search arXiv using a research topic and receive:
+```text
+query
+    ↓
+classification
+    ↓
+papers
+    ↓
+selected_papers
+    ↓
+chunks
+    ↓
+retrieved_candidates
+    ↓
+reranked_chunks
+    ↓
+grounding_score
+    ↓
+grounded
+    ↓
+answer + sources
+```
 
-* Paper title
-* Authors
-* Abstract preview
-* arXiv ID
-* Publication date
-* Categories
-* PDF URL
-* Abstract URL
-* Relevance score
-* Score breakdown
-* Ranked candidates
+### State Fields
 
-Candidate papers are ranked **before downloading PDFs**, reducing unnecessary network and processing work.
+| State                  | Purpose                     |
+| ---------------------- | --------------------------- |
+| `query`                | User's research question    |
+| `classification`       | Query type                  |
+| `papers`               | arXiv candidates            |
+| `selected_papers`      | Selected paper              |
+| `candidate_scores`     | Ranking information         |
+| `chunks`               | Parsed paper chunks         |
+| `retrieved_candidates` | Initial retrieval results   |
+| `reranked_chunks`      | Final evidence              |
+| `grounding_score`      | Evidence strength           |
+| `grounded`             | Grounding decision          |
+| `answer`               | Generated response          |
+| `sources`              | Paper/page provenance       |
+| `active_paper_id`      | Current paper               |
+| `conversation_history` | Interactive session history |
+| `errors`               | Workflow failures           |
+
+Only the required retrieved context is passed to Gemini; the complete application state is not.
 
 ---
 
-### 📄 Local PDF Processing
+## ⭐ Paper Discovery & Ranking
+
+Topic searches follow:
+
+```text
+Topic
+  ↓
+arXiv Metadata Candidates
+  ↓
+Title / Abstract / Category Scoring
+  ↓
+Deterministic Sort
+  ↓
+Selected Paper
+  ↓
+PDF Fetch + Indexing
+```
+
+### Ranking
+
+```text
+55% → Title relevance
+30% → Abstract relevance
+15% → Category relevance
+```
+
+A small capped exact-title phrase bonus is also applied.
+
+The ranking is:
+
+* Deterministic
+* Transparent
+* Reproducible
+
+**Gemini is not used as the ranker.**
+
+### Search
+
+```powershell
+python -m app.main search "graph neural networks"
+```
+
+Search displays candidate metadata, score breakdowns, ranking order, and the selected paper.
+
+Candidate PDFs are **not downloaded during topic search**.
+
+---
+
+## ⭐ Local RAG Pipeline
+
+### PDF → Chunks
 
 Only the selected paper enters the document pipeline.
 
 ```text
-Selected Paper
-     │
-     ▼
-Cached PDF
-     │
-     ▼
+Selected PDF
+    ↓
 PyMuPDF
-     │
-     ▼
-Page-aware text
-     │
-     ▼
+    ↓
+Page-by-page extraction
+    ↓
 Overlapping chunks
+    ↓
+Metadata
 ```
 
 Each chunk preserves:
@@ -188,61 +256,37 @@ paper_id
 chunk_id
 page
 section
-start_offset
-end_offset
+start/end offsets
 text
 ```
 
-This allows retrieval results to remain traceable back to the original paper.
+OCR is intentionally not used.
 
----
+### Embeddings
 
-### 🧠 Local Embeddings
-
-The default embedding model is:
+Default model:
 
 ```text
 sentence-transformers/all-MiniLM-L6-v2
 ```
 
-Benefits:
+Embeddings are normalized and stored in persistent ChromaDB.
 
-* Runs locally
-* No Hugging Face token required
-* Low-cost
-* Reproducible
-* Suitable for a focused research corpus
+```text
+data/chroma/
+```
 
----
-
-### 🗄️ Paper-Isolated ChromaDB
-
-Each paper receives its own deterministic collection.
-
-Example:
+Each paper receives a deterministic collection:
 
 ```text
 paper_1706_03762
 ```
 
-This prevents one paper's chunks from accidentally appearing in another paper's QA context.
-
-```text
-Paper A
-   └── Chroma Collection A
-
-Paper B
-   └── Chroma Collection B
-
-Paper C
-   └── Chroma Collection C
-```
+Paper-specific collections prevent cross-paper retrieval contamination.
 
 ---
 
-### 🔍 Two-Stage Retrieval
-
-The QA pipeline uses:
+## ⭐ Retrieval & Reranking
 
 ```text
 Question
@@ -260,57 +304,55 @@ Grounding Gate
 Gemini
 ```
 
-The system first retrieves a broader candidate set and then reduces it to the most relevant evidence.
+The reranker combines:
+
+* Chroma relevance
+* Lightweight lexical overlap
+
+This keeps retrieval deterministic without introducing another model.
 
 ---
 
-### 🛡️ Grounding Gate
+## ⭐ Grounding & Hallucination Control
 
-This is one of the project's central safeguards.
-
-Before Gemini is called, retrieved evidence is evaluated against:
+Before Gemini is called, the retrieved evidence is evaluated.
 
 ```text
-GROUNDING_THRESHOLD = 0.20
+Retrieved Evidence
+       ↓
+Grounding Gate
+      / \
+     /   \
+    ❌    ✅
+    ↓     ↓
+ Refuse  Gemini
+          ↓
+   Grounded Answer
+          ↓
+       Sources
 ```
 
-If sufficient evidence is not found:
+Default:
+
+```text
+GROUNDING_THRESHOLD=0.20
+```
+
+If evidence is insufficient:
 
 ```text
 I couldn't find enough information in the paper to answer that.
 ```
 
-**Gemini is not called in this branch.**
+Gemini is **not called** in this branch.
 
-When evidence is sufficient, Gemini receives:
-
-```text
-Retrieved excerpts
-+
-Question
-+
-Grounding instructions
-```
-
-It is explicitly instructed not to introduce outside knowledge or unsupported facts.
+When evidence is sufficient, Gemini receives only the final retrieved excerpts and grounding instructions.
 
 ---
 
-### 📚 Source-Aware Answers
+## ⭐ Source Provenance
 
-Answers preserve document provenance.
-
-Example:
-
-```text
-The paper proposes the Transformer architecture,
-which relies on attention mechanisms...
-
-Sources:
-- Page 3 — Figure 1 — arXiv:1706.03762
-```
-
-The provenance chain is maintained throughout the system:
+The final answer preserves evidence back to the original document:
 
 ```text
 PDF
@@ -329,187 +371,29 @@ Grounding
  ↓
 Gemini Context
  ↓
-Final Sources
+Answer + Sources
 ```
 
-Page and section information is never fabricated.
+Example:
+
+```text
+Sources:
+- Page 3 — Figure 1 — arXiv:1706.03762
+```
+
+Page and section metadata are never fabricated.
 
 ---
 
-# 🏗️ Architecture
+## ⭐ Active Paper Sessions
 
-```mermaid
-flowchart TD
-
-    A["👤 User"] --> B["🧠 Query Understanding"]
-
-    B -->|Topic Search| C["🔎 Official arXiv API"]
-    C --> D["📋 Candidate Metadata"]
-    D --> E["📊 Deterministic Ranking"]
-    E --> F["📄 Selected Paper"]
-
-    B -->|Direct ID / URL| F
-
-    F --> G["💾 Cached PDF"]
-    G --> H["📖 PyMuPDF Parser"]
-    H --> I["✂️ Page-aware Chunking"]
-    I --> J["🧠 Local Embeddings"]
-    J --> K[("🗄️ Paper-specific ChromaDB")]
-
-    K --> L["🔍 Dense Retrieval"]
-    L --> M["📊 Deterministic Reranking"]
-    M --> N{"🛡️ Grounding Gate"}
-
-    N -->|Insufficient Evidence| O["🚫 Refusal"]
-    N -->|Sufficient Evidence| P["🤖 Gemini"]
-
-    P --> Q["📚 Grounded Answer"]
-    Q --> R["🔗 Sources"]
-
-    style A stroke-width:2px
-    style N stroke-width:2px
-    style P stroke-width:2px
-    style Q stroke-width:2px
-```
-
----
-
-# 🧩 LangGraph Workflow
-
-The application workflow is intentionally explicit and stateful:
-
-```text
-START
-  │
-  ▼
-classify
-  │
-  ▼
-search
-  │
-  ▼
-index
-  │
-  ▼
-retrieve
-  │
-  ▼
-generate
-  │
-  ▼
-END
-```
-
-### Nodes
-
-| Node       | Responsibility                                       |
-| ---------- | ---------------------------------------------------- |
-| `classify` | Identify topic search, direct paper, briefing, or QA |
-| `search`   | Resolve papers and rank candidates                   |
-| `index`    | Fetch/reuse PDF, parse, chunk, embed and index       |
-| `retrieve` | Retrieve and rerank evidence                         |
-| `generate` | Produce briefing, grounded answer, or refusal        |
-
----
-
-# 🧠 State Design
-
-`ResearchState` connects the workflow stages:
-
-```text
-query
-classification
-max_results
-papers
-selected_papers
-candidate_scores
-direct_paper_id
-context_paper_id
-chunks
-retrieved_candidates
-reranked_chunks
-retrieved
-briefing
-answer
-sources
-grounding_score
-grounded
-conversation_history
-active_paper_id
-collection_name
-errors
-```
-
-The important design goal is that **retrieval, grounding, and generation remain connected without sending the entire application state to Gemini.**
-
----
-
-# 📊 Deterministic Paper Ranking
-
-Topic search follows:
-
-```text
-Topic
-  ↓
-arXiv Metadata
-  ↓
-Title / Abstract / Category Scoring
-  ↓
-Deterministic Sort
-  ↓
-Selected Paper
-```
-
-Current scoring:
-
-```text
-55%  Title relevance
-30%  Abstract relevance
-15%  Category relevance
-```
-
-A small capped exact-title phrase bonus is also applied.
-
-The ranking is intentionally:
-
-* Deterministic
-* Transparent
-* Reproducible
-* Easy to inspect
-
-Gemini is **not used as the paper ranker**.
-
-### Search example
-
-```powershell
-python -m app.main search "graph neural networks"
-```
-
-The command displays:
-
-```text
-Candidate Papers
-      ↓
-Score Breakdown
-      ↓
-Sorted Ranking
-      ↓
-Selected Paper
-```
-
-Candidate PDFs are not downloaded during topic search.
-
----
-
-# 💬 Active Paper Sessions
-
-After briefing a paper:
+After:
 
 ```powershell
 python -m app.main brief 1706.03762
 ```
 
-the selected paper becomes the active research context.
+the paper becomes active.
 
 The lightweight session stores:
 
@@ -522,32 +406,37 @@ The lightweight session stores:
 }
 ```
 
-You can then ask questions without repeatedly specifying the paper:
+You can then ask:
 
 ```powershell
 python -m app.main ask "What architecture does the paper propose?"
 ```
 
-An explicit paper always overrides the active session:
+An explicit `--paper` overrides the active session:
 
 ```powershell
 python -m app.main ask "What are the key results?" --paper 1706.03762
 ```
 
-If no paper is active:
-
-```text
-No active paper is selected.
-Run 'brief <arxiv_id>' or provide --paper <arxiv_id> first.
-```
-
-The system intentionally refuses to guess.
+Without an active paper or `--paper`, the CLI refuses to guess.
 
 ---
 
-# 🐞 Debug Mode
+## ⭐ Caching
 
-Normal CLI output stays concise.
+| Artifact       | Location              | Behavior                    |
+| -------------- | --------------------- | --------------------------- |
+| arXiv metadata | `data/arxiv.json`     | Reused across searches      |
+| PDFs           | `data/pdfs/<id>.pdf`  | Valid PDFs are reused       |
+| ChromaDB       | `data/chroma/`        | Persistent vector index     |
+| Active paper   | `data/session.json`   | Restores paper context      |
+| Briefings      | `data/briefings.json` | Reuses same-paper briefings |
+
+Removing embeddings does not remove the cached PDF.
+
+---
+
+## ⭐ Debug Mode
 
 Use:
 
@@ -555,89 +444,31 @@ Use:
 python -m app.main ask "What architecture does the paper propose?" --debug
 ```
 
-Debug information includes:
+Diagnostics include:
 
-```text
-Active paper
-Collection
-Candidate count
-Reranked chunk count
-Chunk IDs
-Retrieval scores
-Page metadata
-Section metadata
-Grounding score
-Grounding decision
-```
+* Active paper
+* Chroma collection
+* Candidate count
+* Retrieved chunk count
+* Chunk IDs
+* Retrieval scores
+* Page/section metadata
+* Grounding score
+* Grounding decision
 
-🔐 API keys and credentials are never printed.
-
-The full PDF is also never dumped into the terminal.
+API keys and credentials are not printed.
 
 ---
 
-# ♻️ Remove & Re-index
+## ⭐ CLI Reference
 
-Remove a paper's local vector index:
-
-```powershell
-python -m app.main remove 1706.03762
-```
-
-This removes:
-
-```text
-Chroma collection
-Chunks
-Embeddings
-Metadata
-Active session (if applicable)
-```
-
-It intentionally keeps:
-
-```text
-arXiv metadata
-Cached PDF
-Other paper collections
-Unrelated caches
-```
-
-Rebuild the index from the cached PDF:
-
-```powershell
-python -m app.main brief 1706.03762
-```
-
-This recreates the embeddings and Chroma collection.
-
----
-
-# 💾 Caching Strategy
-
-| Artifact       | Location              | Behavior                    |
-| -------------- | --------------------- | --------------------------- |
-| arXiv metadata | `data/arxiv.json`     | Cached queries / IDs        |
-| PDFs           | `data/pdfs/<id>.pdf`  | Reused when valid           |
-| ChromaDB       | `data/chroma/`        | Persistent vector index     |
-| Active paper   | `data/session.json`   | Cross-process context       |
-| Briefings      | `data/briefings.json` | Reused for same paper/query |
-
-Deleting embeddings only affects the vector layer.
-
-The cached PDF remains available for fast re-indexing.
-
----
-
-# 🖥️ CLI Reference
-
-### Interactive Research
+### Interactive Mode
 
 ```powershell
 python -m app.main prompt
 ```
 
-### Search Papers
+### Search
 
 ```powershell
 python -m app.main search "retrieval augmented generation" -n 5
@@ -653,7 +484,7 @@ python -m app.main brief 1706.03762
 python -m app.main brief https://arxiv.org/abs/1706.03762
 ```
 
-### Ask Questions
+### Ask a Question
 
 ```powershell
 python -m app.main ask "What is the main contribution?"
@@ -665,7 +496,7 @@ python -m app.main ask "What is the main contribution?"
 python -m app.main ask "What is the main contribution?" --paper 1706.03762
 ```
 
-### Debug Retrieval
+### Debug
 
 ```powershell
 python -m app.main ask "What is the main contribution?" --debug
@@ -677,7 +508,7 @@ python -m app.main ask "What is the main contribution?" --debug
 python -m app.main ask "What is the main contribution?" --json
 ```
 
-### Remove Local Index
+### Remove Local Embeddings
 
 ```powershell
 python -m app.main remove 1706.03762
@@ -685,53 +516,37 @@ python -m app.main remove 1706.03762
 
 ---
 
-# 🎬 Example Research Workflow
+## ⭐ Example Workflow
 
 ```powershell
-# 1. Select and index a paper
+# Select and index a paper
 python -m app.main brief 1706.03762
 
-# 2. Ask a factual question
+# Ask grounded questions
 python -m app.main ask "What architecture does the paper propose?"
 
-# 3. Ask a reasoning question
 python -m app.main ask "Why was this architecture chosen?"
 
-# 4. Test the grounding boundary
+# Test the grounding boundary
 python -m app.main ask "What does the paper not explain?"
 ```
 
-Expected behavior:
+Example response:
 
 ```text
-┌─────────────────────────────────────────────────┐
-│ Q: What architecture does the paper propose?    │
-└─────────────────────────────────────────────────┘
+Q: What architecture does the paper propose?
 
 A: The paper proposes the Transformer architecture...
 
 Sources:
-• Page 3 — arXiv:1706.03762
+- Page 3 — arXiv:1706.03762
 ```
 
-For unsupported questions:
-
-```text
-┌─────────────────────────────────────────────────┐
-│ Grounding Gate                                  │
-├─────────────────────────────────────────────────┤
-│ Insufficient evidence                           │
-│                                                 │
-│ I couldn't find enough information in the paper │
-│ to answer that.                                 │
-└─────────────────────────────────────────────────┘
-```
-
-This refusal path is intentional.
+Unsupported questions follow the refusal path instead of receiving an outside-knowledge answer.
 
 ---
 
-# 🛠️ Tech Stack
+## ⭐ Tech Stack
 
 | Layer          | Technology            |
 | -------------- | --------------------- |
@@ -740,46 +555,22 @@ This refusal path is intentional.
 | LLM            | Google Gemini         |
 | Paper Source   | Official arXiv API    |
 | PDF Processing | PyMuPDF               |
-| Embeddings     | sentence-transformers |
+| Embeddings     | Sentence Transformers |
 | Vector Store   | ChromaDB              |
-| State          | Local JSON            |
-| Interface      | CLI                   |
 | Testing        | Pytest                |
+| Interface      | CLI                   |
 
 ---
 
-# 🔐 Minimal Infrastructure
+## ⭐ Setup
 
-The project intentionally avoids unnecessary infrastructure.
+### Requirements
 
-### Required
+* Python 3.10+
+* Internet access
+* Gemini API key
 
-```text
-Python 3.10+
-Internet
-Gemini API key
-```
-
-### Not required
-
-```text
-❌ OpenAI API
-❌ ARXIV API key
-❌ Hugging Face token
-❌ PostgreSQL
-❌ Redis
-❌ Docker
-❌ Ollama
-❌ Separate frontend
-```
-
-This keeps the project focused on the core AI/RAG engineering workflow.
-
----
-
-# ⚙️ Setup
-
-## 1. Create Environment
+### Create Environment
 
 ```powershell
 cd D:\assessmen
@@ -789,19 +580,19 @@ python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 ```
 
-## 2. Install Dependencies
+### Install Dependencies
 
 ```powershell
 pip install -r requirements.txt
 ```
 
-## 3. Configure Environment
+### Configure Environment
 
 ```powershell
 Copy-Item .env.example .env
 ```
 
-Add:
+Set:
 
 ```dotenv
 GEMINI_API_KEY=your_key_here
@@ -810,39 +601,45 @@ EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
 GROUNDING_THRESHOLD=0.20
 ```
 
+### No Additional Infrastructure Required
+
+```text
+❌ OpenAI API
+❌ arXiv API key
+❌ Hugging Face token
+❌ PostgreSQL
+❌ Redis
+❌ Docker
+❌ Ollama
+```
+
 ---
 
-# 🧪 Testing
+## ⭐ Testing
 
-Run the full local test suite:
+Run:
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest -q
 ```
 
-The test suite covers:
+The suite covers:
 
-* arXiv endpoint construction
-* Request headers
-* XML parsing
-* Metadata caching
+* arXiv API handling
 * Direct paper resolution
 * Topic ranking
-* Deterministic sorting
-* Selected-paper PDF fetching
-* No candidate PDF downloads during search
+* Deterministic selection
 * PDF validation
-* Chunk ID generation
+* Chunking
+* ChromaDB indexing
 * LangGraph wiring
-* Active-paper persistence
+* Session persistence
 * Embedding removal
-* Missing collection handling
+* Retrieval and reranking
 * Grounding/refusal behavior
-* CLI metadata
-* Ranking output
-* Paper selection output
+* CLI output
 
-### Optional network test
+Optional live integration test:
 
 ```powershell
 $env:RUN_NETWORK_TESTS="1"
@@ -852,7 +649,7 @@ $env:RUN_NETWORK_TESTS="1"
 
 ---
 
-# 🛡️ Failure Handling
+## ⭐ Failure Handling
 
 The application provides actionable errors for:
 
@@ -861,7 +658,7 @@ Invalid arXiv input
         ↓
 No search results
         ↓
-arXiv HTTP/network failures
+Network / API errors
         ↓
 Invalid PDF
         ↓
@@ -869,101 +666,39 @@ Poor text extraction
         ↓
 Empty chunks
         ↓
-Embedding failures
-        ↓
-ChromaDB failures
+Embedding / Chroma failures
         ↓
 Missing active paper
         ↓
 Insufficient grounding
         ↓
-Gemini/API failures
+Gemini failures
 ```
 
-Normal user errors are handled without unnecessary tracebacks.
+Normal user errors do not require unnecessary tracebacks.
 
 Runtime artifacts and secrets are excluded through `.gitignore`.
 
 ---
 
-# 🧠 Engineering Decisions
+## ⭐ Design Decisions
 
-| Decision                       | Reason                                                   |
-| ------------------------------ | -------------------------------------------------------- |
-| **LangGraph**                  | Makes workflow stages and state transitions explicit     |
-| **Official arXiv API**         | Uses a reliable metadata source instead of scraping      |
-| **Local embeddings**           | Low-cost and reproducible                                |
-| **ChromaDB**                   | Simple persistent local vector storage                   |
-| **Paper-specific collections** | Prevent cross-paper contamination                        |
-| **Deterministic ranking**      | Explainable and reproducible                             |
-| **Two-stage retrieval**        | Improves candidate recall before final context selection |
-| **Grounding gate**             | Blocks unsupported generation                            |
-| **Gemini after retrieval**     | LLM operates on controlled evidence                      |
-| **CLI-first design**           | Keeps the project focused on AI engineering              |
-
----
-
-# ⚠️ Known Limitations
-
-The current implementation intentionally has a focused scope.
-
-### PDF Processing
-
-* Text extraction only
-* OCR is not supported
-* Section detection is heuristic
-* Complex PDF layouts may reduce extraction quality
-
-### Retrieval
-
-* Lightweight embedding model
-* Designed for focused local corpora
-* Ranking uses transparent heuristics rather than learned ranking
-
-### External Dependencies
-
-* arXiv availability
-* Internet connectivity
-* Gemini availability
-* Gemini free-tier quotas
-
-### Session State
-
-Interactive conversation history exists during the `prompt` session.
-
-The persistent session stores active-paper metadata rather than the complete conversation.
+| Decision                       | Why                                |
+| ------------------------------ | ---------------------------------- |
+| **Official arXiv API**         | Reliable metadata without scraping |
+| **LangGraph**                  | Explicit stateful workflow         |
+| **Local embeddings**           | Low-cost and reproducible          |
+| **ChromaDB**                   | Persistent local vector storage    |
+| **Paper-specific collections** | Prevent cross-paper contamination  |
+| **Deterministic ranking**      | Explainable and reproducible       |
+| **Two-stage retrieval**        | Better evidence selection          |
+| **Grounding gate**             | Prevent unsupported generation     |
+| **Gemini after retrieval**     | Generate from controlled evidence  |
+| **CLI-first**                  | Focused AI-engineering scope       |
 
 ---
 
-# 🗺️ Roadmap
-
-Potential future improvements:
-
-```text
-Current
-  │
-  ├── ✅ arXiv discovery
-  ├── ✅ Deterministic ranking
-  ├── ✅ Local PDF indexing
-  ├── ✅ ChromaDB RAG
-  ├── ✅ Reranking
-  ├── ✅ Grounding gate
-  ├── ✅ Source provenance
-  └── ✅ Stateful research session
-       │
-       ▼
-Future
-  │
-  ├── 📊 Retrieval evaluation benchmark
-  ├── 📑 Better multi-column PDF parsing
-  ├── ⚡ Streaming responses
-  ├── 📈 Retrieval telemetry
-  └── 🔬 Safe multi-paper comparison
-```
-
----
-
-# 📁 Project Structure
+## ⭐ Project Structure
 
 ```text
 .
@@ -994,134 +729,62 @@ Future
 
 ---
 
-# 🎓 What This Project Demonstrates
+## ⭐ Known Limitations
 
-This project demonstrates practical experience with:
-
-```text
-                    AI ENGINEERING
-                         │
-        ┌────────────────┼────────────────┐
-        ▼                ▼                ▼
-      RAG           Agent Workflow    LLM Integration
-        │                │                │
-        ▼                ▼                ▼
-   Embeddings         LangGraph        Gemini
-   ChromaDB           State            Grounding
-   Reranking          Routing          Prompting
-        │                │                │
-        └────────────────┼────────────────┘
-                         ▼
-                 Production Thinking
-                         │
-              ┌──────────┼──────────┐
-              ▼          ▼          ▼
-          Caching    Error Handling Testing
-              │          │          │
-              └──────────┼──────────┘
-                         ▼
-                 Explainable RAG
-```
-
-The emphasis is not simply on calling an LLM.
-
-It is on building the **retrieval, state, grounding, provenance, caching, failure handling, and testing layers around the LLM**.
+* 📄 PDF extraction is text-only; OCR is not supported.
+* 📑 Section detection is heuristic.
+* 🧠 Lightweight embeddings are designed for focused local corpora.
+* 📊 Ranking is heuristic rather than learned.
+* 🌐 arXiv and Gemini require network access.
+* ⚡ Gemini free-tier quotas may limit usage.
 
 ---
 
-# 🏷️ Project Classification
+## ⭐ Future Improvements
 
-### Runtime
-
-```text
-app/
-requirements.txt
-.env.example
-```
-
-### Documentation & Testing
-
-```text
-README.md
-MANUAL_TESTING.md
-tests/
-```
-
-### Runtime Data
-
-```text
-data/pdfs/
-data/chroma/
-```
-
-### Optional
-
-```text
-examples/
-```
-
-### Generated / Ignored
-
-```text
-.venv/
-__pycache__/
-.pytest_cache/
-.env
-PDF files
-Chroma data
-Session state
-JSON caches
-```
+* [ ] Retrieval evaluation benchmark
+* [ ] Improved multi-column PDF parsing
+* [ ] Streaming responses
+* [ ] Retrieval telemetry
+* [ ] Safe multi-paper comparison
 
 ---
 
-# ⭐ Why the Architecture Matters
-
-The key design philosophy is simple:
-
-> **Retrieve evidence first. Generate second.**
-
-The system does not treat Gemini as the source of truth.
-
-Instead:
+## ⭐ What This Project Demonstrates
 
 ```text
-             SOURCE
-                │
-                ▼
-           RETRIEVAL
-                │
-                ▼
-           RERANKING
-                │
-                ▼
-          GROUNDING GATE
-           /          \
-          /            \
-      Reject          Accept
-        │                │
-        ▼                ▼
-     Refusal           Gemini
-                          │
-                          ▼
-                    Grounded Answer
-                          │
-                          ▼
-                       Sources
+              AI ENGINEERING
+                    │
+       ┌────────────┼────────────┐
+       ▼            ▼            ▼
+      RAG       Agent Workflow   LLM
+       │            │            │
+       ▼            ▼            ▼
+  Embeddings    LangGraph      Gemini
+  ChromaDB      State          Grounding
+  Reranking     Routing        Prompting
+       │            │            │
+       └────────────┼────────────┘
+                    ▼
+             Engineering Layer
+                    │
+       ┌────────────┼────────────┐
+       ▼            ▼            ▼
+    Caching      Testing      Error Handling
+       │            │            │
+       └────────────┼────────────┘
+                    ▼
+              Explainable RAG
 ```
 
-This architecture makes the research workflow easier to inspect, debug, test, and reason about.
+The project demonstrates that an LLM application is more than an API call—it requires **retrieval, state management, grounding, provenance, caching, testing, and failure handling** around the model.
 
 ---
 
 <p align="center">
 
-### 🔬 ArXiv Research Copilot
+## ⭐ Evidence First. Answers Second.
 
-**Discover papers. Build evidence. Ask grounded questions.**
-
-<br>
-
-`Python` • `LangGraph` • `RAG` • `ChromaDB` • `Gemini` • `arXiv`
+**Python • LangGraph • ChromaDB • Gemini • arXiv • RAG**
 
 </p>

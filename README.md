@@ -10,20 +10,17 @@
 
 <strong>Discover research papers, build a local knowledge base, and ask evidence-grounded questions.</strong>
 
-<br><br>
-
-<img src="https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white">
-<img src="https://img.shields.io/badge/LangGraph-Workflow-111827">
-<img src="https://img.shields.io/badge/Gemini-LLM-4285F4?logo=google">
-<img src="https://img.shields.io/badge/ChromaDB-Vector%20Store-FF6F61">
-<img src="https://img.shields.io/badge/PyMuPDF-PDF%20Parsing-orange">
-<img src="https://img.shields.io/badge/RAG-Grounded-purple">
-<img src="https://img.shields.io/badge/Tests-15%20Passed-success">
-
+<p align="center">
+  <img src="https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white">
+  <img src="https://img.shields.io/badge/LangGraph-Workflow-111827">
+  <img src="https://img.shields.io/badge/Gemini-LLM-4285F4?logo=google">
+  <img src="https://img.shields.io/badge/ChromaDB-Vector%20Store-FF6F61">
+  <img src="https://img.shields.io/badge/PyMuPDF-PDF%20Parsing-orange">
+  <img src="https://img.shields.io/badge/RAG-Grounded-purple">
+  <img src="https://img.shields.io/badge/Tests-15%20Passed-success">
 </p>
 
 ---
-
 ## ⭐ Overview
 
 **ArXiv Research Copilot** is an evidence-first AI research assistant built around a controlled **Retrieval-Augmented Generation (RAG)** pipeline.

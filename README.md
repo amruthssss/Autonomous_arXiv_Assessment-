@@ -298,8 +298,9 @@ recreates them through the normal `fetch` and `summarise` workflow.
 
 ## Video
 
-See [VIDEO_SCRIPT.md](VIDEO_SCRIPT.md) for the four-minute demonstration and
-reflection script.
+For the four-minute demonstration, use the repository workflow shown above:
+search, fetch, summarise, and ask a grounded question. The video is submitted
+separately from the repository.
 
 ## Author
 

@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import re
+import random
+import socket
+import sys
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
+from collections.abc import Callable
 from pathlib import Path
 
 from pydantic import ValidationError
@@ -23,6 +27,30 @@ ARXIV_ID_RE = re.compile(
     r"(?<![\w.])(?P<id>(?:\d{4}\.\d{4,5}|[a-z-]+(?:\.[A-Z]{2})?/\d{7})(?:v\d+)?)(?!\w)",
     re.IGNORECASE,
 )
+
+
+class ArxivAPIError(RuntimeError):
+    """A request-level failure from the arXiv API or its network path."""
+
+    def __init__(self, message: str, *, status: int | None = None) -> None:
+        super().__init__(message)
+        self.status = status
+
+    @classmethod
+    def from_http(cls, status: int) -> "ArxivAPIError":
+        messages = {
+            400: "arXiv API rejected the request (HTTP 400).",
+            403: "arXiv API access was forbidden (HTTP 403).",
+            404: "The requested arXiv resource was not found (HTTP 404).",
+            406: "arXiv API rejected the request (HTTP 406).",
+            429: "arXiv API rate limit reached (HTTP 429). Please wait before retrying.",
+        }
+        message = messages.get(
+            status,
+            f"arXiv API/server error (HTTP {status}). "
+            "The service may be temporarily unavailable. Please retry later.",
+        )
+        return cls(message, status=status)
 
 
 def extract_arxiv_id(value: str) -> str | None:
@@ -52,53 +80,190 @@ class ArxivService:
         *,
         opener: object | None = None,
         timeout: float = 20.0,
+        max_retries: int = 2,
+        backoff_base: float = 1.0,
+        sleeper: Callable[[float], None] | None = None,
+        min_request_interval: float = 0.0,
+        debug: bool = False,
     ) -> None:
         self.cache = JsonCache(cache_dir, "arxiv")
-        self.opener = opener or urllib.request.urlopen
+        self.opener = opener
         self.timeout = timeout
+        self.max_retries = max(0, max_retries)
+        self.backoff_base = max(0.0, backoff_base)
+        self.sleeper = sleeper or time.sleep
+        self.min_request_interval = max(0.0, min_request_interval)
+        self.debug = debug
+        self._last_request_at = 0.0
 
     @staticmethod
     def _terms(query: str) -> list[str]:
         return re.findall(r"[a-z0-9][a-z0-9\-']*", query.lower())
 
     def _request(self, url: str) -> bytes:
-        request = urllib.request.Request(
-            url,
-            headers={
+        def request_for(target: str) -> urllib.request.Request:
+            return urllib.request.Request(
+                target,
+                headers={
+                    "User-Agent": USER_AGENT,
+                    "Accept": "application/atom+xml",
+                    "Accept-Encoding": "identity",
+                },
+            )
+
+        def request_once(target: str) -> bytes:
+            headers = {
                 "User-Agent": USER_AGENT,
                 "Accept": "application/atom+xml",
                 "Accept-Encoding": "identity",
-            },
-        )
-        for attempt in range(3):
-            try:
-                with self.opener(request, timeout=self.timeout) as response:
-                    return response.read()
-            except urllib.error.HTTPError as exc:
-                if exc.code != 406:
-                    raise
-                if attempt == 2 and url.startswith(API_URL):
-                    fallback_url = FALLBACK_API_URL + url[len(API_URL):]
-                    with self.opener(
-                        urllib.request.Request(
-                            fallback_url,
-                            headers={
-                                "User-Agent": USER_AGENT,
-                                "Accept": "application/atom+xml",
-                                "Accept-Encoding": "identity",
-                            },
-                        ),
+            }
+            if self.opener is None:
+                try:
+                    import requests
+                except ImportError as exc:
+                    raise RuntimeError(
+                        "requests is required for arXiv API access"
+                    ) from exc
+                try:
+                    response = requests.get(
+                        target,
+                        headers=headers,
                         timeout=self.timeout,
-                    ) as response:
-                        return response.read()
-                if attempt == 2:
-                    raise
-                time.sleep(2**attempt)
+                        allow_redirects=True,
+                    )
+                except requests.Timeout as exc:
+                    raise TimeoutError(str(exc)) from exc
+                except requests.RequestException as exc:
+                    raise urllib.error.URLError(str(exc)) from exc
+                if response.status_code != 200:
+                    raise urllib.error.HTTPError(
+                        target,
+                        response.status_code,
+                        f"HTTP {response.status_code}",
+                        response.headers,
+                        None,
+                    )
+                return response.content
+            try:
+                with self.opener(request_for(target), timeout=self.timeout) as response:
+                    status = getattr(response, "status", 200)
+                    if status != 200:
+                        raise urllib.error.HTTPError(
+                            target,
+                            int(status),
+                            f"HTTP {status}",
+                            getattr(response, "headers", None),
+                            None,
+                        )
+                    return response.read()
             except TypeError:
                 # Makes simple test doubles which only accept a URL convenient.
-                with self.opener(url) as response:  # type: ignore[operator]
+                with self.opener(target) as response:  # type: ignore[operator]
                     return response.read()
-        raise RuntimeError("arXiv request failed after retries")
+
+        target = url
+        fallback_used = False
+        retries_used = 0
+        while True:
+            self._pace()
+            started = time.monotonic()
+            self._debug(
+                f"[DEBUG] arXiv request\n"
+                f"  url: {target}\n"
+                f"  attempt: {retries_used + 1}/{self.max_retries + 1}"
+            )
+            try:
+                payload = request_once(target)
+                self._debug(
+                    f"  status: 200\n"
+                    f"  elapsed: {time.monotonic() - started:.3f}s"
+                )
+                return payload
+            except urllib.error.HTTPError as exc:
+                if exc.code == 406 and target.startswith(API_URL) and not fallback_used:
+                    target = FALLBACK_API_URL + target[len(API_URL):]
+                    fallback_used = True
+                    self._debug(
+                        f"  status: 406\n"
+                        f"  elapsed: {time.monotonic() - started:.3f}s\n"
+                        "  retryable: fallback endpoint"
+                    )
+                    continue
+                # A 406 from both official endpoints can be transient (the
+                # same query may be accepted shortly afterward). Retry only
+                # the fallback endpoint within the existing bounded policy.
+                retryable = exc.code in {429, 500, 502, 503, 504} or (
+                    exc.code == 406 and fallback_used
+                )
+                if not retryable:
+                    self._debug(
+                        f"  status: {exc.code}\n"
+                        f"  elapsed: {time.monotonic() - started:.3f}s\n"
+                        "  retryable: false"
+                    )
+                    raise ArxivAPIError.from_http(exc.code) from exc
+                if retries_used >= self.max_retries:
+                    self._debug(
+                        f"  status: {exc.code}\n"
+                        f"  elapsed: {time.monotonic() - started:.3f}s\n"
+                        "  retryable: exhausted"
+                    )
+                    raise ArxivAPIError.from_http(exc.code) from exc
+                retry_after = exc.headers.get("Retry-After") if exc.headers else None
+                try:
+                    delay = max(0.0, float(retry_after)) if retry_after else 0.0
+                except ValueError:
+                    delay = 0.0
+                if not delay:
+                    delay = self.backoff_base * (2**retries_used)
+                    delay += random.uniform(0.0, min(0.25, self.backoff_base))
+                delay = min(delay, 30.0)
+                self._debug(
+                    f"  status: {exc.code}\n"
+                    f"  elapsed: {time.monotonic() - started:.3f}s\n"
+                    f"  retryable: true\n"
+                    f"  sleep: {delay:.3f}s"
+                )
+                self.sleeper(delay)
+                retries_used += 1
+            except (TimeoutError, socket.timeout) as exc:
+                if retries_used >= self.max_retries:
+                    raise ArxivAPIError(
+                        "Request to the arXiv API timed out. "
+                        "Please check your network connection and try again."
+                    ) from exc
+                delay = min(
+                    self.backoff_base * (2**retries_used)
+                    + random.uniform(0.0, min(0.25, self.backoff_base)),
+                    30.0,
+                )
+                self.sleeper(delay)
+                retries_used += 1
+            except urllib.error.URLError as exc:
+                if retries_used >= self.max_retries:
+                    raise ArxivAPIError(
+                        f"Network failure while contacting the arXiv API: {exc.reason}"
+                    ) from exc
+                delay = min(
+                    self.backoff_base * (2**retries_used)
+                    + random.uniform(0.0, min(0.25, self.backoff_base)),
+                    30.0,
+                )
+                self.sleeper(delay)
+                retries_used += 1
+
+    def _pace(self) -> None:
+        if self.min_request_interval <= 0:
+            self._last_request_at = time.monotonic()
+            return
+        elapsed = time.monotonic() - self._last_request_at
+        if self._last_request_at and elapsed < self.min_request_interval:
+            self.sleeper(self.min_request_interval - elapsed)
+        self._last_request_at = time.monotonic()
+
+    def _debug(self, message: str) -> None:
+        if self.debug:
+            print(message, file=sys.stderr)
 
     @staticmethod
     def _parse(payload: bytes) -> list[Paper]:
@@ -169,7 +334,7 @@ class ArxivService:
 
     def search(self, query: str, max_results: int = 5) -> list[Paper]:
         normalized = " ".join(query.split())
-        cache_key = f"{normalized}|{max_results}"
+        cache_key = f"relevance|{normalized}|{max_results}"
         cached = self.cache.get(cache_key)
         if isinstance(cached, list):
             try:
@@ -188,7 +353,7 @@ class ArxivService:
                 "search_query": search_query,
                 "start": 0,
                 "max_results": max_results,
-                "sortBy": "submittedDate",
+                "sortBy": "relevance",
                 "sortOrder": "descending",
             },
             quote_via=urllib.parse.quote,
@@ -196,14 +361,5 @@ class ArxivService:
         url = f"{API_URL}?{query_params}"
         papers = self._parse(self._request(url))
         terms = self._terms(normalized)
-        papers.sort(
-            key=lambda paper: (
-                sum(paper.title.lower().count(term) * 3 for term in terms)
-                + sum(paper.summary.lower().count(term) for term in terms),
-                paper.published,
-                paper.arxiv_id,
-            ),
-            reverse=True,
-        )
         self.cache.set(cache_key, [paper.model_dump() for paper in papers])
         return papers

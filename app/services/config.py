@@ -24,7 +24,7 @@ class Services:
     briefing_cache: JsonCache | None = None
 
 
-def build_services(root: Path | None = None) -> Services:
+def build_services(root: Path | None = None, *, debug: bool = False) -> Services:
     project_root = root or Path(__file__).resolve().parents[2]
     try:
         from dotenv import load_dotenv
@@ -49,8 +49,18 @@ def build_services(root: Path | None = None) -> Services:
         )
     except ValueError:
         threshold = 0.20
+    try:
+        min_request_interval = max(
+            0.0, float(os.getenv("ARXIV_MIN_REQUEST_INTERVAL", "3.0"))
+        )
+    except ValueError:
+        min_request_interval = 3.0
     return Services(
-        arxiv=ArxivService(data),
+        arxiv=ArxivService(
+            data,
+            min_request_interval=min_request_interval,
+            debug=debug,
+        ),
         pdf=PdfService(data / "pdfs"),
         vector=ChromaVectorStore(data / "chroma", embeddings),
         gemini=GeminiService(),

@@ -38,6 +38,56 @@ class ChromaVectorStore:
             )
         return self._collections[name]
 
+    def inspect_index(self, paper_id: str) -> tuple[str, str]:
+        """Validate an existing paper collection without creating one."""
+
+        name = self.collection_name(paper_id)
+        try:
+            import chromadb
+        except ImportError as exc:
+            raise RuntimeError("chromadb is required for local RAG") from exc
+        if self._client is None:
+            self._client = chromadb.PersistentClient(path=str(self.persist_dir))
+        names = {
+            getattr(collection, "name", collection)
+            for collection in self._client.list_collections()
+        }
+        if name not in names:
+            return "not_indexed", f"No Chroma collection exists for {paper_id}."
+        try:
+            collection = self._client.get_collection(name=name)
+            data = collection.get(include=["documents", "metadatas", "embeddings"])
+        except Exception as exc:
+            self._collections.pop(name, None)
+            return "corrupted", f"Indexed collection {name} could not be read: {exc}"
+        ids = data.get("ids", [])
+        documents = data.get("documents", []) or []
+        metadatas = data.get("metadatas", []) or []
+        embeddings = data.get("embeddings")
+        if not ids or not documents or not metadatas or embeddings is None:
+            return "corrupted", f"Indexed collection {name} is empty or missing embeddings."
+        if len(ids) != len(documents) or len(ids) != len(metadatas):
+            return "corrupted", f"Indexed collection {name} has inconsistent records."
+        for document, metadata in zip(documents, metadatas, strict=False):
+            if not document or not isinstance(metadata, dict):
+                return "corrupted", f"Indexed collection {name} has invalid chunk data."
+            if str(metadata.get("paper_id", "")) != paper_id:
+                return "corrupted", f"Indexed collection {name} contains another paper."
+        self._collections[name] = collection
+        return "indexed", (
+            f"Paper already indexed locally. Using existing indexed evidence "
+            f"from {name} ({len(ids)} chunks)."
+        )
+
+    def delete_collection(self, paper_id: str) -> None:
+        name = self.collection_name(paper_id)
+        if self._client is None:
+            import chromadb
+
+            self._client = chromadb.PersistentClient(path=str(self.persist_dir))
+        self._client.delete_collection(name=name)
+        self._collections.pop(name, None)
+
     def add(self, chunks: Iterable[DocumentChunk]) -> None:
         values = list(chunks)
         if not values:
@@ -114,6 +164,37 @@ class ChromaVectorStore:
         }
         if name not in collection_names:
             return f"No local embeddings found for {paper_id}."
-        self._client.delete_collection(name=name)
-        self._collections.pop(name, None)
+        self.delete_collection(paper_id)
         return f"Removed local embeddings for {paper_id} ({name})."
+
+    def indexed_papers(self) -> list[dict[str, object]]:
+        """Return locally indexed paper summaries discovered from Chroma."""
+
+        try:
+            import chromadb
+        except ImportError as exc:
+            raise RuntimeError("chromadb is required for local RAG") from exc
+        if self._client is None:
+            self._client = chromadb.PersistentClient(path=str(self.persist_dir))
+        papers: list[dict[str, object]] = []
+        for collection in self._client.list_collections():
+            name = str(getattr(collection, "name", collection))
+            if not name.startswith("paper_"):
+                continue
+            try:
+                value = self._client.get_collection(name=name).get(
+                    include=["documents", "metadatas"]
+                )
+                metadata = (value.get("metadatas") or [{}])[0] or {}
+                papers.append(
+                    {
+                        "paper_id": str(metadata.get("paper_id", name.removeprefix("paper_"))),
+                        "title": str(metadata.get("title", "")),
+                        "collection_name": name,
+                        "chunks": len(value.get("ids", [])),
+                        "status": "ready",
+                    }
+                )
+            except Exception:
+                continue
+        return sorted(papers, key=lambda item: str(item["paper_id"]))

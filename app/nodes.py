@@ -5,14 +5,25 @@ from __future__ import annotations
 import re
 from typing import Iterable
 
+from pydantic import ValidationError
+
 from app.services.config import Services
-from app.services.arxiv import extract_arxiv_id
+from app.services.arxiv import ArxivAPIError, extract_arxiv_id
 from app.state import CandidateScore, Paper, ResearchState, SearchHit, SourceMetadata
 
 _STOP_WORDS = {
     "a", "an", "and", "are", "for", "from", "how", "in", "is", "of", "on",
     "or", "the", "this", "to", "what", "with", "paper", "papers", "about",
 }
+
+_REFUSAL_MARKERS = (
+    "couldn't find enough information",
+    "could not find enough information",
+    "evidence is insufficient",
+    "insufficient evidence",
+    "cannot answer from the provided excerpts",
+    "can't answer from the provided excerpts",
+)
 
 
 def _terms(value: str) -> list[str]:
@@ -53,20 +64,6 @@ def rank_candidates(papers: Iterable[Paper], query: str) -> list[tuple[Paper, Ca
         ranked,
         key=lambda item: (-item[1].total, item[0].published or "", item[0].arxiv_id),
     )
-
-
-def rerank_chunks(hits: Iterable[SearchHit], query: str, limit: int = 5) -> list[SearchHit]:
-    """Apply a small lexical tie-breaker after vector retrieval."""
-
-    terms = set(_terms(query))
-    ranked: list[tuple[float, SearchHit]] = []
-    for hit in hits:
-        text_terms = set(_terms(hit.chunk.text))
-        lexical = len(terms & text_terms) / max(len(terms), 1)
-        combined = 0.8 * hit.score + 0.2 * lexical
-        ranked.append((combined, hit.model_copy(update={"score": combined})))
-    ranked.sort(key=lambda item: item[0], reverse=True)
-    return [hit for _, hit in ranked[:limit]]
 
 
 def grounding_gate(
@@ -129,6 +126,9 @@ def search_papers(state: ResearchState, services: Services) -> dict:
                 return {
                     "papers": [],
                     "selected_papers": [],
+                    "search_status": "no_results",
+                    "paper_status": "not_found",
+                    "paper_index_status": "not_found",
                     "errors": [f"Could not resolve arXiv paper {direct_id}"],
                 }
         else:
@@ -137,47 +137,134 @@ def search_papers(state: ResearchState, services: Services) -> dict:
         scores = [score for _, score in ranked]
         ranked_papers = [paper for paper, _ in ranked]
         selected = ranked_papers[:1]
-        return {"papers": ranked_papers, "selected_papers": selected, "candidate_scores": scores}
+        return {
+            "papers": ranked_papers,
+            "selected_papers": selected,
+            "candidate_scores": scores,
+            "search_status": "success" if ranked_papers else "no_results",
+            "paper_status": "found" if selected else "not_found",
+        }
+    except ArxivAPIError as exc:
+        return {
+            "papers": [],
+            "selected_papers": [],
+            "search_status": "arxiv_unavailable",
+            "paper_status": "not_found",
+            "errors": [str(exc)],
+        }
     except Exception as exc:
-        return {"papers": [], "selected_papers": [], "errors": [f"arXiv search failed: {exc}"]}
+        return {
+            "papers": [],
+            "selected_papers": [],
+            "search_status": "error",
+            "paper_status": "not_found",
+            "errors": [f"arXiv search failed: {exc}"],
+        }
 
 
 def index_papers(state: ResearchState, services: Services) -> dict:
-    if state.get("classification") == "search":
-        return {"chunks": [], "errors": list(state.get("errors", []))}
+    if state.get("classification") == "search" or state.get("search_status") in {
+        "arxiv_unavailable",
+        "error",
+        "no_results",
+    }:
+        return {
+            "chunks": [],
+            "paper_index_status": state.get("paper_index_status", "not_checked"),
+            "errors": list(state.get("errors", [])),
+        }
     chunks = []
     errors = list(state.get("errors", []))
+    fetch_status = "not_run"
+    parse_status = "not_run"
     for paper in state.get("selected_papers", []):
         try:
+            inspect = getattr(services.vector, "inspect_index", None)
+            if inspect:
+                status, diagnostic = inspect(paper.arxiv_id)
+                if status == "indexed":
+                    return {
+                        "chunks": [],
+                        "paper_status": "ready",
+                        "fetch_status": "success",
+                        "parse_status": "success",
+                        "index_status": "ready",
+                        "paper_index_status": "indexed",
+                        "index_diagnostic": diagnostic,
+                        "collection_name": services.vector.collection_name(paper.arxiv_id),
+                        "errors": errors,
+                    }
+                if status == "corrupted":
+                    errors.append(diagnostic)
+                    delete_collection = getattr(services.vector, "delete_collection", None)
+                    if delete_collection:
+                        delete_collection(paper.arxiv_id)
             services.pdf.download(paper)
+            fetch_status = "success"
             chunks.extend(services.pdf.chunks(paper))
+            parse_status = "success"
         except Exception as exc:
             errors.append(f"Could not index {paper.arxiv_id}: {exc}")
+            if fetch_status != "success":
+                fetch_status = "failed"
+            if parse_status != "success":
+                parse_status = "failed"
     if chunks:
         try:
             services.vector.add(chunks)
         except Exception as exc:
             errors.append(f"Vector store failed: {exc}")
-    return {"chunks": chunks, "errors": errors}
+            return {
+                "chunks": chunks,
+                "paper_status": "found",
+                "fetch_status": fetch_status,
+                "parse_status": parse_status,
+                "index_status": "failed",
+                "paper_index_status": "not_indexed",
+                "index_diagnostic": (
+                    "The paper was downloaded and parsed successfully, "
+                    "but local indexing could not be completed. "
+                    "Run fetch again to retry."
+                ),
+                "errors": errors,
+            }
+    status = "indexed" if chunks and not errors else "not_indexed"
+    return {
+        "chunks": chunks,
+        "paper_status": "found",
+        "fetch_status": fetch_status,
+        "parse_status": parse_status,
+        "index_status": "ready" if status == "indexed" else "failed",
+        "paper_index_status": status,
+        "index_diagnostic": (
+            "Paper is not indexed. Fetching/parsing PDF and building a local index."
+            if status == "not_indexed"
+            else ""
+        ),
+        "errors": errors,
+    }
 
 
 def retrieve_context(state: ResearchState, services: Services) -> dict:
     if state.get("classification") == "search":
         return {"retrieved": []}
-    if not state.get("chunks"):
+    if state.get("search_status") == "error":
+        return {"retrieved": []}
+    if not state.get("chunks") and state.get("paper_index_status") != "indexed":
         return {"retrieved": []}
     try:
         selected = state.get("selected_papers", [])
         if not selected:
             return {"retrieved": []}
+        retrieval_query = state["query"]
+        if state.get("classification") in {"briefing", "paper"}:
+            paper = selected[0]
+            retrieval_query = f"{paper.title}. {paper.summary}"
         retrieved = services.vector.query(
-            state["query"], paper_id=selected[0].arxiv_id, n_results=10
+            retrieval_query, paper_id=selected[0].arxiv_id, n_results=5
         )
-        reranked = rerank_chunks(retrieved, state["query"], limit=5)
         return {
-            "retrieved_candidates": retrieved,
-            "reranked_chunks": reranked,
-            "retrieved": reranked,
+            "retrieved": retrieved,
             "collection_name": services.vector.collection_name(selected[0].arxiv_id),
         }
     except Exception as exc:
@@ -186,6 +273,12 @@ def retrieve_context(state: ResearchState, services: Services) -> dict:
 
 def generate_response(state: ResearchState, services: Services) -> dict:
     try:
+        if state.get("search_status") in {
+            "no_results",
+            "arxiv_unavailable",
+            "error",
+        }:
+            return {"answer": None, "errors": list(state.get("errors", []))}
         if state.get("classification") in {"briefing", "paper"}:
             if not state.get("selected_papers"):
                 return {
@@ -195,13 +288,32 @@ def generate_response(state: ResearchState, services: Services) -> dict:
                     ]
                 }
             selected = state.get("selected_papers", [])
+            threshold = getattr(services, "grounding_threshold", 0.20)
+            try:
+                threshold = max(0.0, min(1.0, float(threshold)))
+            except (TypeError, ValueError):
+                threshold = 0.20
+            grounded, best = grounding_gate(state.get("retrieved", []), threshold)
+            if not grounded:
+                return {
+                    "briefing": (
+                        "I couldn't find enough information in the paper to generate "
+                        "a grounded briefing."
+                    ),
+                    "grounded": False,
+                    "grounding_score": best,
+                    "sources": [],
+                }
             cache = getattr(services, "briefing_cache", None)
             cache_key = f"{selected[0].arxiv_id}:{state['query']}" if selected else state["query"]
             cached = cache.get(cache_key) if cache else None
             if isinstance(cached, dict):
                 from app.state import ExecutiveBriefing
 
-                return {"briefing": ExecutiveBriefing.model_validate(cached)}
+                try:
+                    return {"briefing": ExecutiveBriefing.model_validate(cached)}
+                except ValidationError:
+                    cached = None
             briefing = services.gemini.briefing(selected, state.get("retrieved", []), state["query"])
             if cache:
                 cache.set(cache_key, briefing.model_dump(mode="json"))
@@ -237,8 +349,20 @@ def generate_response(state: ResearchState, services: Services) -> dict:
                     "grounding_score": best,
                     "sources": sources,
                 }
+            answer = services.gemini.answer(
+                state["query"],
+                state.get("retrieved", []),
+                state.get("conversation_history", []),
+            )
+            if any(marker in answer.lower() for marker in _REFUSAL_MARKERS):
+                return {
+                    "answer": "I couldn't find enough information in this paper to answer that.",
+                    "grounded": False,
+                    "grounding_score": best,
+                    "sources": sources,
+                }
             return {
-                "answer": services.gemini.answer(state["query"], state.get("retrieved", [])),
+                "answer": answer,
                 "grounded": True,
                 "grounding_score": best,
                 "sources": sources,

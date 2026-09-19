@@ -35,7 +35,7 @@ class FakeVector:
 
 
 class FakeGemini:
-    def answer(self, query, hits): return "grounded"
+    def answer(self, query, hits, history=None): return "grounded"
     def briefing(self, papers, hits, query): return "brief"
 
 

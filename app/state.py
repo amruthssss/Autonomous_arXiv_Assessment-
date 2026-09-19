@@ -59,7 +59,12 @@ class ExecutiveBriefing(BaseModel):
     """Structured, source-grounded output for a paper briefing."""
 
     title: str
+    authors: list[str] = Field(default_factory=list)
+    arxiv_id: str
+    published: str = ""
+    link: str = ""
     executive_summary: str
+    problem_statement: str
     key_findings: list[str]
     methods: str
     results: list[str]
@@ -97,6 +102,13 @@ class ResearchState(TypedDict, total=False):
 
     query: str
     classification: Literal["search", "briefing", "qa", "paper"]
+    search_status: Literal[
+        "not_run", "success", "no_results", "arxiv_unavailable", "error"
+    ]
+    paper_status: Literal["not_found", "found", "ready"]
+    fetch_status: Literal["not_run", "success", "failed"]
+    parse_status: Literal["not_run", "success", "failed"]
+    index_status: Literal["not_run", "ready", "failed"]
     max_results: int
     papers: Annotated[list[Paper], _replace]
     selected_papers: Annotated[list[Paper], _replace]
@@ -105,9 +117,7 @@ class ResearchState(TypedDict, total=False):
     context_paper_id: str
     chunks: Annotated[list[DocumentChunk], _replace]
     retrieved: Annotated[list[SearchHit], _replace]
-    retrieved_candidates: Annotated[list[SearchHit], _replace]
-    reranked_chunks: Annotated[list[SearchHit], _replace]
-    answer: str
+    answer: str | None
     briefing: ExecutiveBriefing | str
     errors: Annotated[list[str], _replace]
     from_cache: bool
@@ -117,5 +127,9 @@ class ResearchState(TypedDict, total=False):
     conversation_history: list[dict[str, str]]
     active_paper_id: str
     collection_name: str
+    paper_index_status: Literal[
+        "not_checked", "indexed", "not_indexed", "corrupted", "not_found"
+    ]
+    index_diagnostic: str
     sources: Annotated[list[SourceMetadata], _replace]
     debug: bool

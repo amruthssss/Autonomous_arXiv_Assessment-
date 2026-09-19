@@ -79,11 +79,20 @@ class GeminiService:
 
     def briefing(self, papers: list[Paper], hits: list[SearchHit], query: str) -> ExecutiveBriefing:
         metadata = "\n".join(
-            f"- {paper.title} (arXiv:{paper.arxiv_id}, {paper.abs_url})" for paper in papers
+            (
+                f"- title: {paper.title}\n"
+                f"  authors: {', '.join(paper.authors)}\n"
+                f"  arxiv_id: {paper.arxiv_id}\n"
+                f"  published: {paper.published}\n"
+                f"  link: {paper.abs_url}"
+            )
+            for paper in papers
         )
         prompt = (
             "You are a careful research analyst. Return JSON matching the ExecutiveBriefing "
-            "schema. Include non-empty limitations and follow_up_questions arrays. "
+            "schema. Copy authors, arxiv_id, published, and link from the supplied metadata. "
+            "Include a concise problem_statement, non-empty limitations and "
+            "follow_up_questions arrays. "
             "Write a concise briefing answering the "
             f"request: {query!r}. Use only the supplied paper metadata and excerpts. "
             "Populate sources with arxiv_id, page, and section for every cited excerpt. "
@@ -92,11 +101,22 @@ class GeminiService:
         )
         return self._generate_briefing(prompt)
 
-    def answer(self, query: str, hits: list[SearchHit]) -> str:
+    def answer(
+        self,
+        query: str,
+        hits: list[SearchHit],
+        history: list[dict[str, str]] | None = None,
+    ) -> str:
+        prior_turns = ""
+        if history:
+            prior_turns = "\n\nCONVERSATION HISTORY:\n" + "\n".join(
+                f"Q: {turn.get('question', '')}\nA: {turn.get('answer', '')}"
+                for turn in history[-5:]
+            )
         prompt = (
             "Answer the question using only the excerpts below. Every factual claim must "
             "have an inline citation [arXiv:id, p.N]. Do not invent details; say that the "
-            f"evidence is insufficient when necessary.\nQUESTION: {query}\n\nEXCERPTS:\n"
-            f"{self._sources(hits)}"
+            f"evidence is insufficient when necessary.\nQUESTION: {query}{prior_turns}\n\n"
+            f"EXCERPTS:\n{self._sources(hits)}"
         )
         return self._generate(prompt)
